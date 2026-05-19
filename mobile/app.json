@@ -1,0 +1,39 @@
+{
+    "expo": {
+        "name": "SmartLab",
+        "slug": "smart-lab",
+        "version": "1.0.0",
+        "orientation": "portrait",
+        "icon": "./assets/icon.png",
+        "userInterfaceStyle": "dark",
+        "splash": {
+            "resizeMode": "contain",
+            "backgroundColor": "#0f172a"
+        },
+        "assetBundlePatterns": [
+            "**/*"
+        ],
+        "ios": {
+            "supportsTablet": false,
+            "bundleIdentifier": "edu.university.smartlab"
+        },
+        "android": {
+            "adaptiveIcon": {
+                "foregroundImage": "./assets/adaptive-icon.png",
+                "backgroundColor": "#0f172a"
+            },
+            "package": "edu.university.smartlab"
+        },
+        "plugins": [
+            "expo-router"
+        ],
+        "scheme": "smartlab",
+        "extra": {
+            "apiUrl": "https://3o8rrugo16.execute-api.us-east-1.amazonaws.com/Prod",
+            "wsUrl": "wss://0t1f69w4ui.execute-api.us-east-1.amazonaws.com/prod",
+            "cognitoRegion": "us-east-1",
+            "cognitoUserPool": "us-east-1_dz8Asq19N",
+            "cognitoClientId": "668p98tme9rr6udaup104tmf6i"
+        }
+    }
+}

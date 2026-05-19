@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Smart Lab — CloudWatch Alarms and SNS Alerts
+
+Parameters:
+  AlertEmail:
+    Type: String
+
+Resources:
+  SmartLabAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: smart-lab-alerts
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlertEmail
+
+  StreamProcessorErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: smart-lab-stream-processor-errors
+      AlarmDescription: "DynamoDB stream processor Lambda error rate > 5%"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: smart-lab-booking-stream-processor
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SmartLabAlertTopic
+
+  ForecastDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: smart-lab-forecast-duration
+      AlarmDescription: "ML forecast Lambda running > 10 minutes"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: smart-lab-ml-forecast
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 600000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SmartLabAlertTopic
+
+  APIGateway5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: smart-lab-api-5xx-errors
+      AlarmDescription: "API Gateway 5XX error rate > 1%"
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Dimensions:
+        - Name: ApiName
+          Value: smart-lab-system
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0.01
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SmartLabAlertTopic
+
+  DLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: smart-lab-dlq-messages
+      AlarmDescription: "Booking stream DLQ has messages — stream processing is failing"
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Dimensions:
+        - Name: QueueName
+          Value: smart-lab-booking-stream-dlq
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref SmartLabAlertTopic
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref SmartLabAlertTopic
+    Export:
+      Name: SmartLabAlertTopicArn

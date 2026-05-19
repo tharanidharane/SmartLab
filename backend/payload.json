@@ -1,0 +1,15 @@
+{
+  "httpMethod": "GET",
+  "queryStringParameters": {},
+  "requestContext": {
+    "authorizer": {
+      "claims": {
+        "email": "student@university.edu"
+      }
+    }
+  },
+  "headers": {
+    "Origin": "http://localhost:5173",
+    "origin": "http://localhost:5173"
+  }
+}

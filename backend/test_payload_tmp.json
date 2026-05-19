@@ -1,0 +1,1 @@
+{"httpMethod":"PUT","path":"/bookings/test/status","pathParameters":{"id":"test"},"headers":{"Authorization":"Bearer invalid"},"body":"{\"status\":\"APPROVED\"}"}

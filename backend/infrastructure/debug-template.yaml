@@ -1,0 +1,31 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Debug template for isolation
+
+Resources:
+  SmartLabOperationalBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "sl-system-operational-debug-${AWS::AccountId}"
+  SmartLabEquipmentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-Equipment-Debug
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: equipmentId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: equipmentId, KeyType: HASH }
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-health-debug
+      Handler: dist/functions/health/index.handler
+      Runtime: nodejs20.x
+      CodeUri: ../
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /health
+            Method: GET

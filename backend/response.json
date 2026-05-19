@@ -1,0 +1,1 @@
+{"statusCode":500,"headers":{"Content-Type":"application/json","Access-Control-Allow-Origin":"https://app.university.edu","Access-Control-Allow-Credentials":"true","Access-Control-Allow-Headers":"*","Access-Control-Allow-Methods":"*"},"body":"{\"message\":\"Login failed. Please try again.\",\"statusCode\":500}"}

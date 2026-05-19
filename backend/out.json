@@ -1,0 +1,1 @@
+{"statusCode":401,"headers":{"Content-Type":"application/json","Access-Control-Allow-Origin":"http://localhost:5173","Access-Control-Allow-Credentials":"true","Access-Control-Allow-Headers":"Content-Type,Authorization,X-Api-Key,X-Amz-Date","Access-Control-Allow-Methods":"GET,POST,PUT,DELETE,OPTIONS"},"body":"{\"message\":\"Missing authorization token\",\"statusCode\":401}"}

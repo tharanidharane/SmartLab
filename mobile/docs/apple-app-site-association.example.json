@@ -1,0 +1,38 @@
+{
+    "applinks": {
+        "details": [
+            {
+                "appIDs": [
+                    "TEAMID.com.university.smartlab"
+                ],
+                "components": [
+                    {
+                        "/": "/check-in",
+                        "comment": "Matches https://smartlab.example.com/check-in?bookingId=*"
+                    },
+                    {
+                        "/": "/equipment/*",
+                        "comment": "Matches https://smartlab.example.com/equipment/:id/book"
+                    },
+                    {
+                        "/": "/bookings",
+                        "comment": "Matches https://smartlab.example.com/bookings"
+                    }
+                ]
+            }
+        ]
+    },
+    "_comment": [
+        "SETUP INSTRUCTIONS (iOS Universal Links):",
+        "1. Replace TEAMID with your Apple Developer Team ID.",
+        "2. Replace 'com.university.smartlab' with your bundle identifier from app.json.",
+        "3. Host this file at https://smartlab.example.com/.well-known/apple-app-site-association",
+        "4. The file must be served with Content-Type: application/json (NOT .json extension in URL).",
+        "5. Enable 'Associated Domains' in your Apple Developer account for your App ID.",
+        "6. Add 'applinks:smartlab.example.com' to your Expo app.json under 'ios.associatedDomains'.",
+        "",
+        "ANDROID (Digital Asset Links):",
+        "Host an assetlinks.json at https://smartlab.example.com/.well-known/assetlinks.json",
+        "and add 'android.intentFilters' in app.json per the Expo deep linking docs."
+    ]
+}

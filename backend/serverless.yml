@@ -1,0 +1,181 @@
+service: smart-lab-system
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${env:AWS_REGION, 'us-east-1'}
+  stage: ${opt:stage, 'prod'}
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    DYNAMO_EQUIPMENT_TABLE: SmartLab-Equipment
+    DYNAMO_BOOKINGS_TABLE: SmartLab-Bookings
+    DYNAMO_USERS_TABLE: SmartLab-Users
+    DYNAMO_AUDITLOGS_TABLE: SmartLab-AuditLogs
+    DYNAMO_CONNECTIONS_TABLE: SmartLab-WSConnections
+    DYNAMO_FORECAST_JOBS_TABLE: SmartLab-ForecastJobs
+    DYNAMO_CHAT_SESSIONS_TABLE: SmartLab-ChatSessions
+    DYNAMO_USAGE_METRICS_TABLE: SmartLab-UsageMetrics
+    S3_OPERATIONAL_BUCKET: smart-lab-operational
+    S3_ANALYTICAL_BUCKET: smart-lab-analytical
+    S3_ASSETS_BUCKET: smart-lab-assets
+    ALLOWED_ORIGIN: ${env:ALLOWED_ORIGIN}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID}
+    COGNITO_CLIENT_ID: ${env:COGNITO_CLIENT_ID}
+    KMS_KEY_ID: ${env:KMS_KEY_ID}
+    BEDROCK_MODEL_ID: ${env:BEDROCK_MODEL_ID}
+    BEDROCK_TOKEN_CAP_MONTHLY: ${env:BEDROCK_TOKEN_CAP_MONTHLY}
+    TOKEN_ESTIMATE_MULTIPLIER: ${env:TOKEN_ESTIMATE_MULTIPLIER}
+    ATHENA_DATABASE: smart_lab_db
+    ATHENA_WORKGROUP: primary
+    ATHENA_RESULTS_BUCKET: s3://smart-lab-analytical/athena-results/
+    SSM_ROLE_DOMAINS_PATH: /smartlab/role-domains
+    WEBSOCKET_API_URL: ${env:WEBSOCKET_API_URL}
+
+# NOTE: For production, use SAM template.yaml instead of Serverless Framework.
+# This file is kept as an alternative deployment option / reference.
+
+functions:
+  health:
+    handler: dist/functions/health/index.handler
+    events:
+      - http: { path: /health, method: GET, cors: true }
+  register:
+    handler: dist/functions/auth/register.handler
+    events:
+      - http: { path: /auth/register, method: POST, cors: true }
+  login:
+    handler: dist/functions/auth/login.handler
+    events:
+      - http: { path: /auth/login, method: POST, cors: true }
+  refresh:
+    handler: dist/functions/auth/refresh.handler
+    events:
+      - http: { path: /auth/refresh, method: POST, cors: true }
+  logout:
+    handler: dist/functions/auth/logout.handler
+    events:
+      - http: { path: /auth/logout, method: POST, cors: true }
+  wsTicket:
+    handler: dist/functions/auth/wsTicket.handler
+    events:
+      - http: { path: /auth/ws-ticket, method: POST, cors: true }
+  registerPushToken:
+    handler: dist/functions/users/registerPushToken.handler
+    events:
+      - http: { path: /users/push-token, method: POST, cors: true }
+  getUsersList:
+    handler: src/functions/users/list.handler
+    events:
+      - httpApi:
+          path: /users
+          method: get
+          authorizer:
+            name: cognitoAuthorizer
+  updateUserRole:
+    handler: src/functions/users/updateRole.handler
+    events:
+      - httpApi:
+          path: /users/{id}/role
+          method: put
+          authorizer:
+            name: cognitoAuthorizer
+  equipmentList:
+    handler: dist/functions/equipment/list.handler
+    events:
+      - http: { path: /equipment, method: GET, cors: true }
+  equipmentCreate:
+    handler: dist/functions/equipment/create.handler
+    events:
+      - http: { path: /equipment, method: POST, cors: true }
+  equipmentUpdate:
+    handler: dist/functions/equipment/update.handler
+    events:
+      - http: { path: /equipment/{id}, method: PUT, cors: true }
+  equipmentDelete:
+    handler: dist/functions/equipment/delete.handler
+    events:
+      - http: { path: /equipment/{id}, method: DELETE, cors: true }
+  equipmentSlots:
+    handler: dist/functions/equipment/slots.handler
+    events:
+      - http: { path: /equipment/{id}/slots, method: GET, cors: true }
+  bookingCreate:
+    handler: dist/functions/bookings/create.handler
+    events:
+      - http: { path: /bookings, method: POST, cors: true }
+  bookingMy:
+    handler: dist/functions/bookings/myBookings.handler
+    events:
+      - http: { path: /bookings, method: GET, cors: true }
+  bookingPending:
+    handler: dist/functions/bookings/pending.handler
+    events:
+      - http: { path: /bookings/pending, method: GET, cors: true }
+  bookingUpdateStatus:
+    handler: dist/functions/bookings/updateStatus.handler
+    events:
+      - http: { path: /bookings/{id}/status, method: PUT, cors: true }
+  bookingCancel:
+    handler: dist/functions/bookings/cancel.handler
+    events:
+      - http: { path: /bookings/{id}, method: DELETE, cors: true }
+  bookingGetById:
+    handler: dist/functions/bookings/getById.handler
+    events:
+      - http: { path: /bookings/{id}, method: GET, cors: true }
+  bookingAll:
+    handler: dist/functions/bookings/all.handler
+    events:
+      - http: { path: /bookings/all, method: GET, cors: true }
+  analyticsUtilization:
+    handler: dist/functions/analytics/utilization.handler
+    timeout: 60
+    events:
+      - http: { path: /analytics/utilization, method: GET, cors: true }
+  analyticsForecast:
+    handler: dist/functions/analytics/forecast.handler
+    events:
+      - http: { path: /analytics/forecast, method: GET, cors: true }
+  analyticsForecastRefresh:
+    handler: dist/functions/analytics/forecastRefresh.handler
+    events:
+      - http: { path: /analytics/forecast/refresh, method: POST, cors: true }
+  analyticsForecastStatus:
+    handler: dist/functions/analytics/forecastStatus.handler
+    events:
+      - http: { path: /analytics/forecast/status/{jobId}, method: GET, cors: true }
+  analyticsAnomalies:
+    handler: dist/functions/analytics/anomalies.handler
+    events:
+      - http: { path: /analytics/anomalies, method: GET, cors: true }
+  analyticsAuditLogs:
+    handler: dist/functions/analytics/auditLogs.handler
+    events:
+      - http: { path: /analytics/audit-logs, method: GET, cors: true }
+  analyticsEmbedUrl:
+    handler: dist/functions/analytics/embedUrl.handler
+    events:
+      - http: { path: /analytics/embed-url, method: GET, cors: true }
+  genaiChat:
+    handler: dist/functions/genai/chat.handler
+    timeout: 60
+    memorySize: 1024
+    events:
+      - http: { path: /genai/chat, method: POST, cors: true }
+  genaiUsage:
+    handler: dist/functions/genai/usage.handler
+    events:
+      - http: { path: /genai/usage, method: GET, cors: true }
+  assetUploadUrl:
+    handler: dist/functions/assets/getUploadUrl.handler
+    events:
+      - http: { path: /assets/upload-url, method: POST, cors: true }
+  assetConfirm:
+    handler: dist/functions/assets/confirmUpload.handler
+    events:
+      - http: { path: /assets/confirm, method: POST, cors: true }
+
+plugins:
+  - serverless-offline
+  - serverless-dotenv-plugin

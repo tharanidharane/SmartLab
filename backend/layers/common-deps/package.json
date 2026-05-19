@@ -1,0 +1,45 @@
+{
+  "name": "smart-lab-backend",
+  "version": "1.0.0",
+  "description": "Smart Lab Equipment Booking System — Serverless Backend",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "build:watch": "tsc --project tsconfig.json --watch",
+    "lint": "eslint src --ext .ts",
+    "deploy": "bash infrastructure/deploy.sh",
+    "test": "jest --passWithNoTests"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.525.0",
+    "@aws-sdk/client-dynamodb": "^3.525.0",
+    "@aws-sdk/client-firehose": "^3.525.0",
+    "@aws-sdk/client-kms": "^3.525.0",
+    "@aws-sdk/client-lambda": "^3.525.0",
+    "@aws-sdk/client-s3": "^3.525.0",
+    "@aws-sdk/client-sns": "^3.525.0",
+    "@aws-sdk/client-sqs": "^3.525.0",
+    "@aws-sdk/client-ssm": "^3.525.0",
+    "@aws-sdk/client-athena": "^3.525.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.525.0",
+    "@aws-sdk/client-quicksight": "^3.525.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.525.0",
+    "@aws-sdk/lib-dynamodb": "^3.525.0",
+    "@aws-sdk/s3-request-presigner": "^3.525.0",
+    "aws-jwt-verify": "^4.0.0",
+    "zod": "^3.22.4",
+    "uuid": "^9.0.0",
+    "openai": "^4.28.4"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.133",
+    "@types/uuid": "^9.0.7",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.12",
+    "ts-jest": "^29.1.2",
+    "eslint": "^8.57.0",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0"
+  }
+}

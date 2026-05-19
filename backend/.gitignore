@@ -1,0 +1,39 @@
+# Environment — NEVER commit credentials
+.env
+.env.local
+.env.production
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.aws-sam/
+
+# Lambda packaging
+*.zip
+layers/prophet-layer/python/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+*.egg-info/
+
+# AWS SAM
+samconfig.toml.bak
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db

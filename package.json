@@ -1,0 +1,17 @@
+{
+  "name": "smart-lab-system",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart Lab Equipment Booking & Intelligence System — monorepo root",
+  "scripts": {
+    "dev": "concurrently --names \"BACKEND,WEB\" --prefix-colors \"cyan,magenta\" \"npm run dev --prefix backend\" \"npm run dev --prefix web\"",
+    "dev:backend": "node scripts/dev-backend.cjs",
+    "dev:web": "npm run dev --prefix web",
+    "dev:mobile": "npm run start --prefix mobile",
+    "install:all": "npm install --prefix backend && npm install --prefix web && npm install --prefix mobile",
+    "build:backend": "npm run build --prefix backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

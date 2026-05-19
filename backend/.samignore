@@ -1,0 +1,16 @@
+node_modules/
+.aws-sam/
+infrastructure/
+layers/
+src/
+tsconfig.json
+package.json
+package-lock.json
+.samignore
+.gitignore
+.env
+.env.example
+serverless.yml
+*.ts
+**/*.ts
+**/*.map

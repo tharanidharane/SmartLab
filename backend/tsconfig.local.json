@@ -1,0 +1,13 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": ".",
+        "outDir": "./dist-local",
+        "noUnusedLocals": false,
+        "noUnusedParameters": false
+    },
+    "include": [
+        "local-server.ts",
+        "src/**/*"
+    ]
+}

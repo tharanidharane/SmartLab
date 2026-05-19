@@ -1,0 +1,1890 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Smart Lab Equipment Booking & Usage Intelligence System
+Parameters:
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:5173
+  AlertEmail:
+    Type: String
+  KmsKeyId:
+    Type: String
+  CognitoUserPoolId:
+    Type: String
+  CognitoClientId:
+    Type: String
+  NodeEnv:
+    Type: String
+    Default: production
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    CodeUri: ../dist
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV:
+          Ref: NodeEnv
+        AWS_ACCOUNT_ID:
+          Ref: AWS::AccountId
+        DYNAMO_EQUIPMENT_TABLE: SmartLab-Equipment
+        DYNAMO_BOOKINGS_TABLE: SmartLab-Bookings
+        DYNAMO_USERS_TABLE: SmartLab-Users
+        DYNAMO_AUDITLOGS_TABLE: SmartLab-AuditLogs
+        DYNAMO_CONNECTIONS_TABLE: SmartLab-WSConnections
+        DYNAMO_FORECAST_JOBS_TABLE: SmartLab-ForecastJobs
+        DYNAMO_CHAT_SESSIONS_TABLE: SmartLab-ChatSessions
+        DYNAMO_USAGE_METRICS_TABLE: SmartLab-UsageMetrics
+        S3_OPERATIONAL_BUCKET:
+          Fn::Sub: sl-system-operational-${AWS::AccountId}
+        S3_ANALYTICAL_BUCKET:
+          Fn::Sub: sl-system-analytical-${AWS::AccountId}
+        S3_ASSETS_BUCKET:
+          Fn::Sub: sl-system-assets-${AWS::AccountId}
+        KMS_KEY_ID:
+          Ref: KmsKeyId
+        COGNITO_USER_POOL_ID:
+          Ref: CognitoUserPoolId
+        COGNITO_CLIENT_ID:
+          Ref: CognitoClientId
+        ALLOWED_ORIGIN:
+          Ref: AllowedOrigin
+        BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
+        BEDROCK_TOKEN_CAP_MONTHLY: '100000'
+        TOKEN_ESTIMATE_MULTIPLIER: '2'
+        ATHENA_DATABASE:
+          Fn::Sub: smart_lab_db_${AWS::AccountId}
+        ATHENA_WORKGROUP: primary
+        ATHENA_RESULTS_BUCKET:
+          Fn::Sub: s3://${SmartLabAnalyticalBucket}/athena-results/
+        SSM_ROLE_DOMAINS_PATH: /smartlab/role-domains
+    Tracing: Active
+    Layers:
+    - Ref: CommonDepsLayer
+    - Fn::Sub: arn:aws:lambda:${AWS::Region}:580247275435:layer:LambdaInsightsExtension:38
+  Api:
+    TracingEnabled: true
+    Cors:
+      AllowMethods: '''*'''
+      AllowHeaders: '''*'''
+      AllowOrigin: '''*'''
+      AllowCredentials: false
+    Auth:
+      DefaultAuthorizer: CognitoAuthorizer
+      AddDefaultAuthorizerToCorsPreflight: false
+      Authorizers:
+        CognitoAuthorizer:
+          UserPoolArn:
+            Fn::Sub: arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+Resources:
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-health
+      Handler: functions/health/index.handler
+      Role:
+        Fn::GetAtt:
+        - HealthLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /health
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        WarmupSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Input: '{"warmup":true}'
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: HealthFunction
+  RegisterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-auth-register
+      Handler: functions/auth/register.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /auth/register
+            Method: POST
+            Auth:
+              Authorizer: NONE
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: RegisterFunction
+  LoginFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-auth-login
+      Handler: functions/auth/login.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /auth/login
+            Method: POST
+            Auth:
+              Authorizer: NONE
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: LoginFunction
+  RefreshFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-auth-refresh
+      Handler: functions/auth/refresh.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /auth/refresh
+            Method: POST
+            Auth:
+              Authorizer: NONE
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: RefreshFunction
+  LogoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-auth-logout
+      Handler: functions/auth/logout.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /auth/logout
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: LogoutFunction
+  PostConfirmationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-cognito-post-confirmation
+      Handler: functions/auth/postConfirmation.handler
+      Role:
+        Fn::GetAtt:
+        - PostConfirmationLambdaRole
+        - Arn
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: PostConfirmationFunction
+  PreTokenGenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-cognito-pre-token-gen
+      Handler: functions/cognito/preTokenGen.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: PreTokenGenFunction
+  WsTicketFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-ws-ticket
+      Handler: functions/auth/wsTicket.handler
+      Role:
+        Fn::GetAtt:
+        - AuthLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /auth/ws-ticket
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: WsTicketFunction
+  RegisterPushTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-users-push-token
+      Handler: functions/users/registerPushToken.handler
+      Role:
+        Fn::GetAtt:
+        - UserLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /users/push-token
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: RegisterPushTokenFunction
+  EquipmentListFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-equipment-list
+      Handler: functions/equipment/list.handler
+      Role:
+        Fn::GetAtt:
+        - EquipmentLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /equipment
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: EquipmentListFunction
+  EquipmentCreateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-equipment-create
+      Handler: functions/equipment/create.handler
+      Role:
+        Fn::GetAtt:
+        - EquipmentLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /equipment
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: EquipmentCreateFunction
+  EquipmentUpdateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-equipment-update
+      Handler: functions/equipment/update.handler
+      Role:
+        Fn::GetAtt:
+        - EquipmentLambdaRole
+        - Arn
+      Events:
+        HttpPut:
+          Type: Api
+          Properties:
+            Path: /equipment/{id}
+            Method: PUT
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: EquipmentUpdateFunction
+  EquipmentDeleteFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-equipment-delete
+      Handler: functions/equipment/delete.handler
+      Role:
+        Fn::GetAtt:
+        - EquipmentLambdaRole
+        - Arn
+      Events:
+        HttpDelete:
+          Type: Api
+          Properties:
+            Path: /equipment/{id}
+            Method: DELETE
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: EquipmentDeleteFunction
+  EquipmentSlotsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-equipment-slots
+      Handler: functions/equipment/slots.handler
+      Role:
+        Fn::GetAtt:
+        - EquipmentLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /equipment/{id}/slots
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: EquipmentSlotsFunction
+  BookingCreateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-create
+      Handler: functions/bookings/create.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /bookings
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingCreateFunction
+  BookingMyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-my
+      Handler: functions/bookings/myBookings.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /bookings
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingMyFunction
+  BookingPendingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-pending
+      Handler: functions/bookings/pending.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /bookings/pending
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingPendingFunction
+  BookingUpdateStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-update-status
+      Handler: functions/bookings/updateStatus.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpPut:
+          Type: Api
+          Properties:
+            Path: /bookings/{id}/status
+            Method: PUT
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingUpdateStatusFunction
+  BookingCancelFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-cancel
+      Handler: functions/bookings/cancel.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpDelete:
+          Type: Api
+          Properties:
+            Path: /bookings/{id}
+            Method: DELETE
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingCancelFunction
+  BookingAllFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-all
+      Handler: functions/bookings/all.handler
+      Role:
+        Fn::GetAtt:
+        - BookingLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /bookings/all
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingAllFunction
+  BookingStreamProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-booking-stream-processor
+      Handler: functions/bookings/streamProcessor.handler
+      Role:
+        Fn::GetAtt:
+        - StreamProcessorLambdaRole
+        - Arn
+      Timeout: 60
+      Events:
+        DynamoDBStream:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              Fn::GetAtt:
+              - SmartLabBookingsTable
+              - StreamArn
+            StartingPosition: LATEST
+            BisectBatchOnFunctionError: true
+            DestinationConfig:
+              OnFailure:
+                Type: SQS
+                Destination:
+                  Fn::GetAtt:
+                  - BookingStreamDLQ
+                  - Arn
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: BookingStreamProcessorFunction
+  AnalyticsUtilizationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-utilization
+      Handler: functions/analytics/utilization.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Timeout: 60
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/utilization
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsUtilizationFunction
+  AnalyticsForecastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-forecast
+      Handler: functions/analytics/forecast.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/forecast
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsForecastFunction
+  AnalyticsForecastRefreshFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-forecast-refresh
+      Handler: functions/analytics/forecastRefresh.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Timeout: 10
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /analytics/forecast/refresh
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsForecastRefreshFunction
+  AnalyticsForecastStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-forecast-status
+      Handler: functions/analytics/forecastStatus.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/forecast/status/{jobId}
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsForecastStatusFunction
+  AnalyticsAnomaliesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-anomalies
+      Handler: functions/analytics/anomalies.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/anomalies
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsAnomaliesFunction
+  AnalyticsAuditLogsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-audit-logs
+      Handler: functions/analytics/auditLogs.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/audit-logs
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsAuditLogsFunction
+  AnalyticsEmbedUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-analytics-embed-url
+      Handler: functions/analytics/embedUrl.handler
+      Role:
+        Fn::GetAtt:
+        - AnalyticsLambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /analytics/embed-url
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AnalyticsEmbedUrlFunction
+  GenAIChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-genai-chat
+      Handler: functions/genai/chat.handler
+      Role:
+        Fn::GetAtt:
+        - GenAILambdaRole
+        - Arn
+      Timeout: 60
+      MemorySize: 1024
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /genai/chat
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: GenAIChatFunction
+  GenAIUsageFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-genai-usage
+      Handler: functions/genai/usage.handler
+      Role:
+        Fn::GetAtt:
+        - GenAILambdaRole
+        - Arn
+      Events:
+        HttpGet:
+          Type: Api
+          Properties:
+            Path: /genai/usage
+            Method: GET
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: GenAIUsageFunction
+  AssetUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-assets-upload-url
+      Handler: functions/assets/getUploadUrl.handler
+      Role:
+        Fn::GetAtt:
+        - AssetLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /assets/upload-url
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AssetUploadUrlFunction
+  AssetConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-assets-confirm
+      Handler: functions/assets/confirmUpload.handler
+      Role:
+        Fn::GetAtt:
+        - AssetLambdaRole
+        - Arn
+      Events:
+        HttpPost:
+          Type: Api
+          Properties:
+            Path: /assets/confirm
+            Method: POST
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AssetConfirmFunction
+  AssetValidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-assets-validate
+      Handler: functions/assets/validateUpload.handler
+      Role:
+        Fn::GetAtt:
+        - AssetLambdaRole
+        - Arn
+      Timeout: 30
+      Events:
+        S3Event:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: SmartLabAssetsBucket
+            Events: s3:ObjectCreated:*
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: AssetValidateFunction
+  WsConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-ws-connect
+      Handler: functions/websocket/connect.handler
+      Role:
+        Fn::GetAtt:
+        - WebSocketLambdaRole
+        - Arn
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: WsConnectFunction
+  WsDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-ws-disconnect
+      Handler: functions/websocket/disconnect.handler
+      Role:
+        Fn::GetAtt:
+        - WebSocketLambdaRole
+        - Arn
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: WsDisconnectFunction
+  WsBroadcastFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-ws-broadcast
+      Handler: functions/websocket/broadcast.handler
+      Role:
+        Fn::GetAtt:
+        - WebSocketLambdaRole
+        - Arn
+      Timeout: 15
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: WsBroadcastFunction
+  StuckJobsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: smart-lab-maintenance-stuck-jobs
+      Handler: functions/maintenance/stuckJobs.handler
+      Role:
+        Fn::GetAtt:
+        - MaintenanceLambdaRole
+        - Arn
+      Timeout: 60
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Input: '{"task":"checkStuckJobs"}'
+      CodeUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/f4024fe18167d404fdaec66592a1b6df
+    Metadata:
+      SamResourceId: StuckJobsFunction
+  SmartLabWebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: smart-lab-websocket
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+    Metadata:
+      SamResourceId: SmartLabWebSocketApi
+  WsConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: SmartLabWebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target:
+        Fn::Sub: integrations/${WsConnectIntegration}
+    Metadata:
+      SamResourceId: WsConnectRoute
+  WsDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId:
+        Ref: SmartLabWebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      Target:
+        Fn::Sub: integrations/${WsDisconnectIntegration}
+    Metadata:
+      SamResourceId: WsDisconnectRoute
+  WsConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:
+        Ref: SmartLabWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConnectFunction.Arn}/invocations
+    Metadata:
+      SamResourceId: WsConnectIntegration
+  WsDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId:
+        Ref: SmartLabWebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri:
+        Fn::Sub: arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDisconnectFunction.Arn}/invocations
+    Metadata:
+      SamResourceId: WsDisconnectIntegration
+  WsStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId:
+        Ref: SmartLabWebSocketApi
+      StageName: prod
+      AutoDeploy: true
+    Metadata:
+      SamResourceId: WsStage
+  WsConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: WsConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SmartLabWebSocketApi}/*/*
+    Metadata:
+      SamResourceId: WsConnectPermission
+  WsDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Ref: WsDisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SmartLabWebSocketApi}/*/*
+    Metadata:
+      SamResourceId: WsDisconnectPermission
+  SmartLabEquipmentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-Equipment
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId:
+          Ref: KmsKeyId
+      AttributeDefinitions:
+      - AttributeName: equipmentId
+        AttributeType: S
+      - AttributeName: category
+        AttributeType: S
+      - AttributeName: createdAt
+        AttributeType: S
+      KeySchema:
+      - AttributeName: equipmentId
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: category-index
+        KeySchema:
+        - AttributeName: category
+          KeyType: HASH
+        - AttributeName: createdAt
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+    Metadata:
+      SamResourceId: SmartLabEquipmentTable
+  SmartLabBookingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-Bookings
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId:
+          Ref: KmsKeyId
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+      - AttributeName: bookingId
+        AttributeType: S
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: status
+        AttributeType: S
+      - AttributeName: createdAt
+        AttributeType: S
+      - AttributeName: equipmentId
+        AttributeType: S
+      - AttributeName: date
+        AttributeType: S
+      KeySchema:
+      - AttributeName: bookingId
+        KeyType: HASH
+      - AttributeName: userId
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: status-index
+        KeySchema:
+        - AttributeName: status
+          KeyType: HASH
+        - AttributeName: createdAt
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      - IndexName: equipment-date-index
+        KeySchema:
+        - AttributeName: equipmentId
+          KeyType: HASH
+        - AttributeName: date
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      - IndexName: user-index
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: createdAt
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+    Metadata:
+      SamResourceId: SmartLabBookingsTable
+  SmartLabUsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-Users
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId:
+          Ref: KmsKeyId
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+    Metadata:
+      SamResourceId: SmartLabUsersTable
+  SmartLabAuditLogsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-AuditLogs
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId:
+          Ref: KmsKeyId
+      AttributeDefinitions:
+      - AttributeName: logId
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: S
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: resource
+        AttributeType: S
+      KeySchema:
+      - AttributeName: logId
+        KeyType: HASH
+      - AttributeName: timestamp
+        KeyType: RANGE
+      GlobalSecondaryIndexes:
+      - IndexName: userId-index
+        KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      - IndexName: resource-index
+        KeySchema:
+        - AttributeName: resource
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+    Metadata:
+      SamResourceId: SmartLabAuditLogsTable
+  SmartLabWSConnectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-WSConnections
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+      - AttributeName: connectionId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: connectionId
+        KeyType: HASH
+    Metadata:
+      SamResourceId: SmartLabWSConnectionsTable
+  SmartLabForecastJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-ForecastJobs
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+      - AttributeName: jobId
+        AttributeType: S
+      - AttributeName: status
+        AttributeType: S
+      - AttributeName: startedAt
+        AttributeType: S
+      KeySchema:
+      - AttributeName: jobId
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: status-startedAt-index
+        KeySchema:
+        - AttributeName: status
+          KeyType: HASH
+        - AttributeName: startedAt
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+    Metadata:
+      SamResourceId: SmartLabForecastJobsTable
+  SmartLabChatSessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-ChatSessions
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: sessionId
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+      - AttributeName: sessionId
+        KeyType: RANGE
+    Metadata:
+      SamResourceId: SmartLabChatSessionsTable
+  SmartLabUsageMetricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SmartLab-UsageMetrics
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      AttributeDefinitions:
+      - AttributeName: userId
+        AttributeType: S
+      - AttributeName: yearMonth
+        AttributeType: S
+      KeySchema:
+      - AttributeName: userId
+        KeyType: HASH
+      - AttributeName: yearMonth
+        KeyType: RANGE
+    Metadata:
+      SamResourceId: SmartLabUsageMetricsTable
+  SmartLabOperationalBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: sl-system-operational-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID:
+              Ref: KmsKeyId
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+        - Id: ArchiveToGlacier
+          Status: Enabled
+          Transitions:
+          - TransitionInDays: 90
+            StorageClass: GLACIER
+    Metadata:
+      SamResourceId: SmartLabOperationalBucket
+  SmartLabAnalyticalBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: sl-system-analytical-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID:
+              Ref: KmsKeyId
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+    Metadata:
+      SamResourceId: SmartLabAnalyticalBucket
+  SmartLabAssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Fn::Sub: sl-system-assets-${AWS::AccountId}
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID:
+              Ref: KmsKeyId
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+    Metadata:
+      SamResourceId: SmartLabAssetsBucket
+  BookingStreamDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: smart-lab-booking-stream-dlq
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId:
+        Ref: KmsKeyId
+    Metadata:
+      SamResourceId: BookingStreamDLQ
+  SmartLabGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId:
+        Ref: AWS::AccountId
+      DatabaseInput:
+        Name:
+          Fn::Sub: smart_lab_db_${AWS::AccountId}
+        Description: Smart Lab analytical data catalog
+    Metadata:
+      SamResourceId: SmartLabGlueDatabase
+  SmartLabGlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name:
+        Fn::Sub: smart-lab-crawler-${AWS::AccountId}
+      Role:
+        Fn::GetAtt:
+        - GlueRole
+        - Arn
+      DatabaseName:
+        Fn::Sub: smart_lab_db_${AWS::AccountId}
+      Schedule:
+        ScheduleExpression: cron(0 */6 * * ? *)
+      Targets:
+        S3Targets:
+        - Path:
+            Fn::Sub: s3://${SmartLabOperationalBucket}/usage-logs/
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: LOG
+    Metadata:
+      SamResourceId: SmartLabGlueCrawler
+  SmartLabGlueETLJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: smart-lab-etl-json-to-parquet
+      Role:
+        Fn::GetAtt:
+        - GlueRole
+        - Arn
+      Command:
+        Name: glueetl
+        ScriptLocation:
+          Fn::Sub: s3://${SmartLabAnalyticalBucket}/scripts/etl_job.py
+        PythonVersion: '3'
+      DefaultArguments:
+        --job-bookmark-option: job-bookmark-enable
+        --enable-continuous-cloudwatch-log: 'true'
+        --enable-job-insights: 'true'
+        --TempDir:
+          Fn::Sub: s3://${SmartLabAnalyticalBucket}/glue-temp/
+        --SOURCE_BUCKET:
+          Ref: SmartLabOperationalBucket
+        --DEST_BUCKET:
+          Ref: SmartLabAnalyticalBucket
+      GlueVersion: '4.0'
+      MaxRetries: 1
+      Timeout: 60
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+    Metadata:
+      SamResourceId: SmartLabGlueETLJob
+  SmartLabGlueTrigger:
+    Type: AWS::Glue::Trigger
+    Properties:
+      Name: smart-lab-etl-daily
+      Type: SCHEDULED
+      Schedule: cron(0 20 * * ? *)
+      Actions:
+      - JobName:
+          Ref: SmartLabGlueETLJob
+    Metadata:
+      SamResourceId: SmartLabGlueTrigger
+  HealthLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: HealthPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: dynamodb:DescribeTable
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Equipment
+    Metadata:
+      SamResourceId: HealthLambdaRole
+  AuthLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: AuthPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - cognito-idp:InitiateAuth
+            - cognito-idp:SignUp
+            - cognito-idp:GlobalSignOut
+            - cognito-idp:AdminInitiateAuth
+            Resource:
+              Fn::Sub: arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-WSConnections
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: AuthLambdaRole
+  PostConfirmationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: PostConfirmationPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - cognito-idp:AdminAddUserToGroup
+            Resource:
+              Fn::Sub: arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPoolId}
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Users
+          - Effect: Allow
+            Action:
+            - ssm:GetParameter
+            Resource:
+              Fn::Sub: arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/smartlab/role-domains
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: PostConfirmationLambdaRole
+  EquipmentLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: EquipmentPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Scan
+            - dynamodb:Query
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Equipment
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Equipment/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Bookings/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-AuditLogs
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource:
+              Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:smart-lab-ws-broadcast
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: EquipmentLambdaRole
+  BookingLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: BookingPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Bookings
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Bookings/index/*
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-AuditLogs
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource:
+              Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:smart-lab-ws-broadcast
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: BookingLambdaRole
+  StreamProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+      Policies:
+      - PolicyName: StreamProcessorPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            - dynamodb:GetItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Bookings
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Users
+          - Effect: Allow
+            Action:
+            - sqs:SendMessage
+            Resource:
+              Fn::GetAtt:
+              - BookingStreamDLQ
+              - Arn
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource:
+              Fn::Sub: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:smart-lab-ws-broadcast
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: StreamProcessorLambdaRole
+  UserLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: UserPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            - dynamodb:GetItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Users
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: UserLambdaRole
+  AnalyticsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: AnalyticsPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:ListBucket
+            Resource:
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}/*
+          - Effect: Allow
+            Action:
+            - athena:StartQueryExecution
+            - athena:GetQueryExecution
+            - athena:GetQueryResults
+            - athena:StopQueryExecution
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - glue:GetTable
+            - glue:GetDatabase
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-AuditLogs
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-AuditLogs/index/*
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ForecastJobs
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ForecastJobs/index/*
+          - Effect: Allow
+            Action:
+            - quicksight:GenerateEmbedUrlForRegisteredUser
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: AnalyticsLambdaRole
+  GenAILambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: GenAIPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action: bedrock:InvokeModel
+            Resource:
+              Fn::Sub: arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:ListBucket
+            Resource:
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}/*
+          - Effect: Allow
+            Action:
+            - athena:StartQueryExecution
+            - athena:GetQueryExecution
+            - athena:GetQueryResults
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ChatSessions
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-UsageMetrics
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Equipment
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: GenAILambdaRole
+  AssetLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: AssetPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:HeadObject
+            Resource:
+            - Fn::Sub: arn:aws:s3:::sl-system-assets-${AWS::AccountId}/*
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource:
+              Fn::Sub: arn:aws:s3:::sl-system-assets-${AWS::AccountId}
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-Equipment
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: AssetLambdaRole
+  WebSocketLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: WebSocketPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:PutItem
+            - dynamodb:DeleteItem
+            - dynamodb:GetItem
+            - dynamodb:UpdateItem
+            - dynamodb:Query
+            - dynamodb:Scan
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-WSConnections
+          - Effect: Allow
+            Action: execute-api:ManageConnections
+            Resource:
+              Fn::Sub: arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: WebSocketLambdaRole
+  MLLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: MLPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:ListBucket
+            Resource:
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}/*
+          - Effect: Allow
+            Action:
+            - dynamodb:UpdateItem
+            - dynamodb:PutItem
+            Resource:
+              Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ForecastJobs
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: MLLambdaRole
+  MaintenanceLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+      - PolicyName: MaintenancePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - dynamodb:Query
+            - dynamodb:UpdateItem
+            Resource:
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ForecastJobs
+            - Fn::Sub: arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/SmartLab-ForecastJobs/index/status-startedAt-index
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: MaintenanceLambdaRole
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: glue.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+      - PolicyName: GlueS3Policy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:ListBucket
+            - s3:DeleteObject
+            Resource:
+            - Fn::Sub: arn:aws:s3:::sl-system-operational-${AWS::AccountId}
+            - Fn::Sub: arn:aws:s3:::sl-system-operational-${AWS::AccountId}/*
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}
+            - Fn::Sub: arn:aws:s3:::sl-system-analytical-${AWS::AccountId}/*
+          - Effect: Allow
+            Action:
+            - kms:GenerateDataKey
+            - kms:Decrypt
+            Resource:
+              Fn::Sub: arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${KmsKeyId}
+    Metadata:
+      SamResourceId: GlueRole
+  SmartLabApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/apigateway/smart-lab-api
+      RetentionInDays: 90
+    Metadata:
+      SamResourceId: SmartLabApiLogGroup
+  SmartLabWebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: smart-lab-web-acl
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: SmartLabWebACL
+        SampledRequestsEnabled: true
+      Rules:
+      - Name: RateLimitRule
+        Priority: 0
+        Action:
+          Block: {}
+        VisibilityConfig:
+          CloudWatchMetricsEnabled: true
+          MetricName: SmartLabRateLimit
+          SampledRequestsEnabled: true
+        Statement:
+          RateBasedStatement:
+            Limit: 2000
+            AggregateKeyType: IP
+      - Name: AWSManagedCommonRules
+        Priority: 1
+        OverrideAction:
+          None: {}
+        VisibilityConfig:
+          CloudWatchMetricsEnabled: true
+          MetricName: SmartLabCommonRules
+          SampledRequestsEnabled: true
+        Statement:
+          ManagedRuleGroupStatement:
+            VendorName: AWS
+            Name: AWSManagedRulesCommonRuleSet
+      - Name: AWSManagedKnownBadInputs
+        Priority: 2
+        OverrideAction:
+          None: {}
+        VisibilityConfig:
+          CloudWatchMetricsEnabled: true
+          MetricName: SmartLabKnownBadInputs
+          SampledRequestsEnabled: true
+        Statement:
+          ManagedRuleGroupStatement:
+            VendorName: AWS
+            Name: AWSManagedRulesKnownBadInputsRuleSet
+    Metadata:
+      SamResourceId: SmartLabWebACL
+  CommonDepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: smart-lab-common-deps
+      Description: Common dependencies for all functions
+      ContentUri: s3://aws-sam-cli-managed-default-samclisourcebucket-u5gr3fm4e9bi/591c54a641dcd57ecbac5cf5eb538ee9
+      CompatibleRuntimes:
+      - nodejs20.x
+    Metadata:
+      BuildMethod: nodejs20.x
+      SamResourceId: CommonDepsLayer
+Outputs:
+  ApiGatewayUrl:
+    Description: REST API endpoint
+    Value:
+      Fn::Sub: https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+    Export:
+      Name: SmartLabApiGatewayUrl
+  WebSocketUrl:
+    Description: WebSocket API endpoint
+    Value:
+      Fn::Sub: wss://${SmartLabWebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+    Export:
+      Name: SmartLabWebSocketUrl
